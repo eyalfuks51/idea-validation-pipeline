@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ scores.idea_name | default(idea.name, true) }} — Idea Validation Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root {
+    --go: #22c55e; --go-bg: #dcfce7;
+    --conditional: #f59e0b; --conditional-bg: #fef3c7;
+    --pause: #6b7280; --pause-bg: #f3f4f6;
+    --nogo: #ef4444; --nogo-bg: #fee2e2;
+    --bg: #0f172a; --surface: #1e293b; --surface2: #334155;
+    --text: #e2e8f0; --text-muted: #94a3b8; --accent: #38bdf8;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+  h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
+  .thesis { color: var(--text-muted); font-size: 1rem; margin-bottom: 1.5rem; }
+
+  /* Verdict banner */
+  .verdict-banner {
+    display: flex; align-items: center; gap: 1.5rem;
+    padding: 1.5rem; border-radius: 12px; margin-bottom: 2rem;
+  }
+  .verdict-banner.GO { background: var(--go-bg); color: #14532d; }
+  .verdict-banner.CONDITIONAL_GO { background: var(--conditional-bg); color: #78350f; }
+  .verdict-banner.PAUSE { background: var(--pause-bg); color: #1f2937; }
+  .verdict-banner.NO_GO { background: var(--nogo-bg); color: #7f1d1d; }
+  .verdict-badge {
+    font-size: 1.25rem; font-weight: 700; padding: 0.5rem 1rem;
+    border-radius: 8px; white-space: nowrap;
+  }
+  .verdict-banner.GO .verdict-badge { background: var(--go); color: #fff; }
+  .verdict-banner.CONDITIONAL_GO .verdict-badge { background: var(--conditional); color: #fff; }
+  .verdict-banner.PAUSE .verdict-badge { background: var(--pause); color: #fff; }
+  .verdict-banner.NO_GO .verdict-badge { background: var(--nogo); color: #fff; }
+  .verdict-details { flex: 1; }
+  .composite-score { font-size: 2.5rem; font-weight: 800; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; margin-bottom: 0; border-bottom: 2px solid var(--surface2); }
+  .tab {
+    padding: 0.75rem 1.25rem; cursor: pointer; font-weight: 500;
+    color: var(--text-muted); border-bottom: 2px solid transparent;
+    margin-bottom: -2px; transition: all 0.2s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-content { display: none; padding: 1.5rem; background: var(--surface); border-radius: 0 0 12px 12px; }
+  .tab-content.active { display: block; }
+
+  /* Score bars */
+  .score-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 2rem; }
+  .score-item { background: var(--surface); padding: 1rem; border-radius: 8px; }
+  .score-label { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.25rem; text-transform: capitalize; }
+  .score-bar-container { display: flex; align-items: center; gap: 0.75rem; }
+  .score-bar { flex: 1; height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+  .score-bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+  .score-value { font-weight: 700; font-size: 1.1rem; min-width: 2rem; text-align: right; }
+  .score-reasoning { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem; }
+
+  /* Chart */
+  .chart-container { max-width: 450px; margin: 0 auto 2rem; }
+
+  /* Agent sections */
+  .finding { background: var(--surface2); padding: 1rem; border-radius: 8px; margin-bottom: 0.75rem; }
+  .finding-title { font-weight: 600; margin-bottom: 0.25rem; }
+  .finding-meta { font-size: 0.8rem; color: var(--text-muted); }
+  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+  .badge-high, .badge-critical { background: #ef4444; color: #fff; }
+  .badge-medium, .badge-serious { background: #f59e0b; color: #fff; }
+  .badge-low, .badge-moderate { background: #22c55e; color: #fff; }
+  .badge-minor { background: #6b7280; color: #fff; }
+
+  .kill-signal { background: #7f1d1d; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 0.5rem; border-left: 4px solid #ef4444; }
+  .next-step { background: var(--surface); padding: 1rem; border-radius: 8px; border-left: 4px solid var(--accent); margin-top: 1.5rem; }
+
+  h2 { font-size: 1.25rem; margin-bottom: 1rem; color: var(--accent); }
+  h3 { font-size: 1rem; margin: 1.25rem 0 0.5rem; color: var(--text); }
+  p { margin-bottom: 0.5rem; }
+  ul { padding-left: 1.5rem; margin-bottom: 0.75rem; }
+  li { margin-bottom: 0.25rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>{{ scores.idea_name | default(idea.name, true) }}</h1>
+  <p class="thesis">{{ idea.thesis }}</p>
+
+  {% set verdict = scores.verdict | default("N/A") %}
+  <div class="verdict-banner {{ verdict }}">
+    <div>
+      <div class="composite-score">{{ "%.1f" | format(scores.composite_score | default(0)) }}</div>
+      <div style="font-size:0.85rem;">Composite Score</div>
+    </div>
+    <div class="verdict-badge">{{ verdict | replace("_", " ") }}</div>
+    <div class="verdict-details">
+      <p>{{ scores.verdict_reasoning | default("") }}</p>
+    </div>
+  </div>
+
+  <!-- Radar Chart -->
+  <div class="chart-container">
+    <canvas id="radarChart"></canvas>
+  </div>
+
+  <!-- Score Breakdown -->
+  <div class="score-grid">
+    {% for key, val in scores.scores.items() %}
+    {% set s = val.score if val is mapping else val %}
+    {% set r = val.reasoning if val is mapping else "" %}
+    <div class="score-item">
+      <div class="score-label">{{ key | replace("_", " ") }}</div>
+      <div class="score-bar-container">
+        <div class="score-bar">
+          <div class="score-bar-fill" style="width:{{ s * 10 }}%; background: {% if s >= 7 %}var(--go){% elif s >= 5 %}var(--conditional){% elif s >= 3 %}var(--pause){% else %}var(--nogo){% endif %};"></div>
+        </div>
+        <div class="score-value">{{ s }}</div>
+      </div>
+      {% if r %}<div class="score-reasoning">{{ r }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Next Step -->
+  {% if scores.recommended_next_step %}
+  <div class="next-step">
+    <strong>Recommended Next Step:</strong> {{ scores.recommended_next_step }}
+  </div>
+  {% endif %}
+
+  <!-- Agent Tabs -->
+  <div style="margin-top: 2rem;">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab(event, 'synthesis')">Synthesis</div>
+      <div class="tab" onclick="switchTab(event, 'devils')">Devil's Advocate</div>
+      <div class="tab" onclick="switchTab(event, 'market')">Market Realist</div>
+      <div class="tab" onclick="switchTab(event, 'builder')">Builder's Lens</div>
+    </div>
+
+    <!-- Synthesis Tab -->
+    <div id="synthesis" class="tab-content active">
+      <h2>Cross-Validated Findings</h2>
+      {% for f in synthesis.cross_validated_findings | default([]) %}
+      <div class="finding">
+        <div class="finding-title">{{ f.id }}: {{ f.title }}</div>
+        <p>{{ f.summary }}</p>
+        <div class="finding-meta">
+          <span class="badge badge-{{ f.confidence }}">{{ f.confidence }}</span>
+          {{ f.category | replace("_", " ") }} — Sources: {{ f.sources_agreeing | join(", ") }}
+        </div>
+      </div>
+      {% endfor %}
+
+      {% if synthesis.single_source_findings %}
+      <h3>Single-Source Findings</h3>
+      {% for f in synthesis.single_source_findings %}
+      <div class="finding">
+        <div class="finding-title">{{ f.id | default("") }}: {{ f.title }}</div>
+        <p>{{ f.summary }}</p>
+      </div>
+      {% endfor %}
+      {% endif %}
+
+      {% if synthesis.contradictions %}
+      <h3>Contradictions</h3>
+      {% for c in synthesis.contradictions %}
+      <div class="finding">
+        <div class="finding-title">{{ c.topic }}</div>
+        <p><strong>Perplexity:</strong> {{ c.perplexity_says }}</p>
+        <p><strong>Gemini:</strong> {{ c.gemini_says }}</p>
+        <p><em>Resolution:</em> {{ c.likely_resolution }}</p>
+      </div>
+      {% endfor %}
+      {% endif %}
+
+      {% if synthesis.key_numbers %}
+      <h3>Key Numbers</h3>
+      <ul>
+        <li>TAM: {{ synthesis.key_numbers.tam_range | default("N/A") }}</li>
+        <li>SAM: {{ synthesis.key_numbers.sam_range | default("N/A") }}</li>
+        <li>SOM: {{ synthesis.key_numbers.som_range | default("N/A") }}</li>
+        <li>Price Point: {{ synthesis.key_numbers.price_point | default("N/A") }}</li>
+        <li>Competitors: {{ synthesis.key_numbers.competitor_count | default("N/A") }}</li>
+        <li>Market Gap Confirmed: {{ "Yes" if synthesis.key_numbers.market_gap_confirmed else "No" }}</li>
+      </ul>
+      {% endif %}
+    </div>
+
+    <!-- Devil's Advocate Tab -->
+    <div id="devils" class="tab-content">
+      <h2>Challenges</h2>
+      {% for c in devils_advocate.challenges | default([]) %}
+      <div class="finding">
+        <div class="finding-title">{{ c.finding_id }}: {{ c.challenge_title }}</div>
+        <p>{{ c.challenge_detail }}</p>
+        <div class="finding-meta">
+          <span class="badge badge-{{ c.severity }}">{{ c.severity }}</span>
+          {% if c.mitigation_possible %}
+          <span style="margin-left:0.5rem;">Mitigation: {{ c.mitigation_suggestion }}</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+
+      {% if devils_advocate.kill_signals %}
+      <h3>Kill Signals</h3>
+      {% for ks in devils_advocate.kill_signals %}
+      <div class="kill-signal">{{ ks }}</div>
+      {% endfor %}
+      {% endif %}
+
+      {% if devils_advocate.hidden_risks %}
+      <h3>Hidden Risks</h3>
+      {% for hr in devils_advocate.hidden_risks %}
+      <div class="finding">
+        <div class="finding-title">{{ hr.risk }}</div>
+        <p>{{ hr.detail }}</p>
+        <span class="badge badge-{{ hr.probability }}">{{ hr.probability }} probability</span>
+      </div>
+      {% endfor %}
+      {% endif %}
+    </div>
+
+    <!-- Market Realist Tab -->
+    <div id="market" class="tab-content">
+      {% set ts = market_realist.target_segment | default({}) %}
+      {% set pmf = market_realist.product_market_fit_assessment | default({}) %}
+      {% set mvp = market_realist.mvp_definition | default({}) %}
+      {% set rev = market_realist.revenue_projection | default({}) %}
+      {% set gtm = market_realist.go_to_market_channel | default({}) %}
+
+      <h2>Target Segment</h2>
+      <div class="finding">
+        <p><strong>Description:</strong> {{ ts.description | default("N/A") }}</p>
+        <p><strong>Size:</strong> {{ ts.size_estimate | default("N/A") }}</p>
+        <p><strong>Current Spend:</strong> {{ ts.current_spend_on_alternatives | default("N/A") }}</p>
+        <p><strong>Pain Level:</strong> {{ ts.pain_level | default("N/A") }}/10 | <strong>WTP:</strong> {{ ts.willingness_to_pay | default("N/A") }}/10</p>
+      </div>
+
+      <h3>Product-Market Fit</h3>
+      <div class="finding">
+        <p>Demand Signal: <span class="badge">{{ pmf.demand_signal_strength | default("N/A") }}</span></p>
+        <p>Solution Gap: {{ pmf.solution_gap_quality | default("N/A") | replace("_", " ") }}</p>
+        <p>Pricing Gap: {{ pmf.pricing_gap | default("N/A") | replace("_", " ") }}</p>
+        <p>Moat Potential: {{ pmf.competitive_moat_potential | default("N/A") }}</p>
+        <p><strong>Overall PMF Score: {{ pmf.overall_pmf_score | default("N/A") }}/10</strong></p>
+      </div>
+
+      <h3>MVP Definition</h3>
+      <div class="finding">
+        <p><strong>Core:</strong> {{ mvp.core_feature | default("N/A") }}</p>
+        <p><strong>Integrations:</strong> {{ mvp.must_have_integrations | default([]) | join(", ") }}</p>
+        <p><strong>Excluded:</strong> {{ mvp.explicitly_excluded | default([]) | join(", ") }}</p>
+        <p><strong>Time to MVP:</strong> {{ mvp.estimated_time_to_mvp | default("N/A") }}</p>
+      </div>
+
+      <h3>Revenue Projection</h3>
+      <div class="finding">
+        <p>Month 6 MRR: {{ rev.month_6_mrr | default("N/A") }}</p>
+        <p>Month 12 MRR: {{ rev.month_12_mrr | default("N/A") }}</p>
+        {% for a in rev.assumptions | default([]) %}<p style="font-size:0.85rem; color:var(--text-muted);">• {{ a }}</p>{% endfor %}
+      </div>
+
+      <h3>Go-To-Market</h3>
+      <div class="finding">
+        <p>Primary: {{ gtm.primary | default("N/A") }}</p>
+        <p>Secondary: {{ gtm.secondary | default("N/A") }}</p>
+        <p>Est. CAC: {{ gtm.estimated_cac | default("N/A") }}</p>
+      </div>
+    </div>
+
+    <!-- Builder's Lens Tab -->
+    <div id="builder" class="tab-content">
+      {% set bl = builder_lens %}
+      {% set fa = bl.feasibility_assessment | default({}) %}
+      {% set ta = bl.timing_assessment | default({}) %}
+      {% set ob = bl.operational_burden | default({}) %}
+
+      <h2>Complexity: {{ bl.complexity_score | default("N/A") }}/10</h2>
+      {% set cb = bl.complexity_breakdown | default({}) %}
+      <div class="finding">
+        {% for key, val in cb.items() %}
+        <p><strong>{{ key | replace("_", " ") | title }}:</strong> {{ val }}</p>
+        {% endfor %}
+      </div>
+
+      <h3>Feasibility</h3>
+      <div class="finding">
+        <p>Can Build MVP: {{ "Yes" if fa.can_build_mvp else "No" }}</p>
+        <p>Est. Weeks: {{ fa.estimated_mvp_weeks | default("N/A") }}</p>
+        <p>Biggest Risk: {{ fa.biggest_technical_risk | default("N/A") }}</p>
+        {% for u in fa.critical_unknowns | default([]) %}<p style="color:var(--conditional);">Unknown: {{ u }}</p>{% endfor %}
+      </div>
+
+      <h3>Build vs Buy</h3>
+      {% for rec in bl.build_vs_buy_recommendations | default([]) %}
+      <div class="finding">
+        <div class="finding-title">{{ rec.component }}: {{ rec.recommendation | upper }}</div>
+        <p>{{ rec.reason }}</p>
+        {% if rec.cost_if_buy %}<p style="font-size:0.85rem; color:var(--text-muted);">Cost: {{ rec.cost_if_buy }}</p>{% endif %}
+      </div>
+      {% endfor %}
+
+      <h3>Timing</h3>
+      <div class="finding">
+        <p>Can Start Now: {{ "Yes" if ta.can_start_now else "No" }}</p>
+        <p>Recommended Start: {{ ta.recommended_start_date | default("N/A") }}</p>
+        {% for c in ta.conflicts_with | default([]) %}<p style="color:var(--conditional);">Conflict: {{ c }}</p>{% endfor %}
+        <p>{{ ta.reasoning | default("") }}</p>
+      </div>
+
+      <h3>Operational Burden</h3>
+      <div class="finding">
+        <p>Weekly Hours: {{ ob.weekly_hours_after_launch | default("N/A") }}</p>
+        <p>Burnout Risk: {{ ob.burnout_risk | default("N/A") }}</p>
+        {% for t in ob.key_maintenance_tasks | default([]) %}<p>• {{ t }}</p>{% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function switchTab(e, id) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  e.target.classList.add('active');
+  document.getElementById(id).classList.add('active');
+}
+
+// Radar Chart
+const scores = {{ scores.scores | tojson }};
+const labels = Object.keys(scores).map(k => k.replace(/_/g, ' '));
+const values = Object.values(scores).map(v => typeof v === 'object' ? v.score : v);
+
+new Chart(document.getElementById('radarChart'), {
+  type: 'radar',
+  data: {
+    labels: labels,
+    datasets: [{
+      label: '{{ scores.idea_name | default(idea.name, true) }}',
+      data: values,
+      backgroundColor: 'rgba(56, 189, 248, 0.2)',
+      borderColor: '#38bdf8',
+      borderWidth: 2,
+      pointBackgroundColor: '#38bdf8',
+    }]
+  },
+  options: {
+    scales: {
+      r: {
+        min: 0, max: 10,
+        ticks: { stepSize: 2, color: '#94a3b8', backdropColor: 'transparent' },
+        grid: { color: '#334155' },
+        angleLines: { color: '#334155' },
+        pointLabels: { color: '#e2e8f0', font: { size: 11 } }
+      }
+    },
+    plugins: { legend: { display: false } }
+  }
+});
+</script>
+</body>
+</html>
